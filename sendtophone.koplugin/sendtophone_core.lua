@@ -16,6 +16,15 @@ local Core = {}
 Core.DEFAULT_SERVER = "https://api.day.app"
 Core.DEFAULT_GROUP = "Kindle"
 Core.DEFAULT_TEMPLATE = "请结合上下文解释下面这段文字{source}：\n{text}"
+-- Ways to ask, offered after tapping "发送到手机". A preset without a
+-- template sends the selection as is.
+Core.DEFAULT_PRESETS = {
+    { name = "简短解释", template = "用两三句话、不超过100字，解释下面这段文字在书中的意思{source}：\n{text}" },
+    { name = "查词", template = "“{text}”在这里是什么意思？一句话回答{source}。" },
+    { name = "翻译", template = "把下面这段文字翻译成中文（原文是中文就翻译成英文），只给译文：\n{text}" },
+    { name = "详细解释", template = Core.DEFAULT_TEMPLATE },
+    { name = "只发原文" },
+}
 Core.FALLBACK_TITLE = "KOReader"
 Core.ELLIPSIS = "…"
 -- APNs allows 4096 bytes. The aps wrapper, sound, category, group, autocopy

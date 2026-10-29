@@ -23,6 +23,11 @@ package.loaded["util"] = { cleanupSelectedText = function(t) return (t:gsub("^%s
 package.loaded["ui/widget/container/widgetcontainer"] = {
   extend = function(_, cls) cls.new = function(c, o) o = o or {}; setmetatable(o, {__index = c}); if o.init then o:init() end; return o end; return cls end }
 package.loaded["ui/widget/infomessage"] = { new = function(_, t) t._w = "InfoMessage"; return t end }
+package.loaded["ui/widget/buttondialog"] = { new = function(_, t) t._w = "ButtonDialog"; return t end }
+package.loaded["ui/widget/multiinputdialog"] = { new = function(_, t)
+  t._w = "MultiInputDialog"
+  t.getFields = function(self) local r = {} for i, f in ipairs(self.fields) do r[i] = f.text end return r end
+  t.onShowKeyboard = function() end; return t end }
 package.loaded["ui/widget/inputdialog"] = { new = function(_, t)
   t._w = "InputDialog"; t.getInputText = function(self) return self.input end
   t.onShowKeyboard = function() end; return t end }
@@ -89,13 +94,23 @@ def menu_items():
     G.plugin.addToMainMenu(G.plugin, items)
     return items.sendtophone
 
-def press_highlight(text):
+def press_highlight(text, choice="详细解释"):
+    """Tap 发送到手机, then the way to ask named `choice` (None: no picker expected)."""
     G.highlight.selected_text = lua.table_from({"text": text})
     G.highlight.cleared = False
     fn = G.highlight._highlight_buttons["12_qr_sendtophone"]
     button = fn(G.highlight)
     assert s(button.text) == "发送到手机"
+    n = len(G.shown)
     button.callback()
+    if choice is None or len(G.shown) == n:
+        return
+    dlg = G.shown[len(G.shown)]
+    if s(dlg._w) != "ButtonDialog":
+        return
+    names = [s(dlg.buttons[i][1].text) for i in range(1, len(dlg.buttons) + 1)]
+    dlg.buttons[names.index(choice) + 1][1].callback()
+    return names
 
 assert s(G.settings_path) == "/koreader/settings/sendtophone.lua"
 assert G.registered is not None
@@ -146,33 +161,57 @@ assert int(s(req.headers["Content-Length"])) == len(body.encode("utf-8"))
 payload = json.loads(body)
 assert payload == {"device_key": KEY, "title": "《三体》", "group": "Kindle", "autoCopy": "1",
                    "body": "请结合上下文解释下面这段文字（出自《三体》，刘慈欣）：\n给岁月以文明"}, payload
-texts = [s(G.shown[i].text) for i in range(before + 1, len(G.shown) + 1)]
+texts = [s(G.shown[i].text) for i in range(before + 1, len(G.shown) + 1) if G.shown[i]._w == "InfoMessage"]
 assert texts == ["发送中…", "已发送"], texts
 assert G.package.loaded["socketutil"].cur is None, "timeouts are reset"
 
-# --- template switched off: raw text ---------------------------------------
+# --- choosing a way to ask ---------------------------------------------------
+names = press_highlight("raw text", "只发原文")
+assert names == ["简短解释", "查词", "翻译", "详细解释", "只发原文", "取消"], names
+assert json.loads(s(G.requests[len(G.requests)].source))["body"] == "raw text"
+press_highlight("serendipity", "查词")
+assert json.loads(s(G.requests[len(G.requests)].source))["body"] == "“serendipity”在这里是什么意思？一句话回答（出自《三体》，刘慈欣）。"
+press_highlight("hello", "翻译")
+assert json.loads(s(G.requests[len(G.requests)].source))["body"].endswith("只给译文：\nhello")
+n = len(G.requests)
+press_highlight("x", "取消")
+assert len(G.requests) == n, "cancel sends nothing"
+
+# picker off: the first way is used directly
 toggle = items.sub_item_table[3]
-assert toggle.checked_func() is True
+assert s(toggle.text) == "划词后先选问法" and toggle.checked_func() is True
 toggle.callback()
 assert toggle.checked_func() is False
-assert items.sub_item_table[4].enabled_func() is False
-press_highlight("raw text")
-assert json.loads(s(G.requests[len(G.requests)].source))["body"] == "raw text"
+press_highlight("直接发", None)
+assert json.loads(s(G.requests[len(G.requests)].source))["body"].startswith("用两三句话")
 toggle.callback()
 
-# --- custom template -------------------------------------------------------
-items.sub_item_table[4].callback()
+# --- editing a way to ask ----------------------------------------------------
+edit = items.sub_item_table[4]
+sub = edit.sub_item_table_func()
+assert [s(sub[i].text_func()) for i in range(1, 6)] == ["1. 简短解释", "2. 查词", "3. 翻译", "4. 详细解释", "5. 只发原文"]
+sub[3].callback(tm)
 dlg = G.shown[len(G.shown)]
-dlg.input = "没有占位符"
-dlg.buttons[1][3].callback()
-assert "{text}" in last_text() and G.saved.template is None
-dlg.input = "翻译成中文：{text}"
-dlg.buttons[1][3].callback()
-press_highlight("hello")
+assert s(dlg._w) == "MultiInputDialog"
+dlg.fields[2].text = "没有占位符"
+dlg.buttons[1][2].callback()
+assert "{text}" in last_text() and G.saved.presets is None
+dlg.fields[1].text = " 英译中 "
+dlg.fields[2].text = "翻译成中文：{text}"
+dlg.buttons[1][2].callback()
+assert s(G.saved.presets[3].name) == "英译中"
+assert s(sub[3].text_func()) == "3. 英译中"
+press_highlight("hello", "英译中")
 assert json.loads(s(G.requests[len(G.requests)].source))["body"] == "翻译成中文：hello"
-items.sub_item_table[4].callback()
-G.shown[len(G.shown)].buttons[1][2].callback()  # 恢复默认
-assert G.saved.template is None
+# an empty template means raw text
+sub[1].callback(tm)
+dlg = G.shown[len(G.shown)]
+dlg.fields[2].text = "  "
+dlg.buttons[1][2].callback()
+press_highlight("原样", "简短解释")
+assert json.loads(s(G.requests[len(G.requests)].source))["body"] == "原样"
+sub[len(sub)].callback(tm)  # 全部恢复默认
+assert G.saved.presets is None
 
 # --- long text is truncated and the user is told ---------------------------
 press_highlight("长" * 3000)
