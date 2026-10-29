@@ -1,5 +1,6 @@
-"""Tests for sendtophone_translate.lua and the 翻译 button that replaces KOReader's Google one, under LuaJIT.
-Run: python3 -m pip install lupa==2.8 && python3 -X utf8 tests/test_translate.py
+"""Tests for the online buttons that replace KOReader's Translate and Wikipedia
+(sendtophone_translate.lua, sendtophone_ai.lua), under LuaJIT.
+Run: python3 -m pip install lupa==2.8 && python3 -X utf8 tests/test_online.py
 """
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -112,7 +113,7 @@ package.loaded["ssl.https"] = { request = function(req)
 end }
 package.loaded["json"] = { decode = function(b) return py_json_decode(b) end }
 package.loaded["ffi/sha2"] = { md5 = function(x) return py_md5(x) end }
-highlight = { _highlight_buttons = { ["07_translate"] = function() return { text = "Translate" } end } }  -- KOReader's own, to be replaced
+highlight = { _highlight_buttons = { ["05_wikipedia"] = function() return { text = "Wikipedia" } end, ["07_translate"] = function() return { text = "Translate" } end } }  -- KOReader's own, to be replaced
 function highlight:addToHighlightDialog(idx, fn) self._highlight_buttons[idx] = fn end
 function highlight:highlightFromHoldPos() end
 function highlight:onClose() end
@@ -121,7 +122,7 @@ plugin = require("main"):new{ ui = ui, document = {} }
 ''')
 G = lua.globals()
 keys = sorted(s(k) for k in G.highlight._highlight_buttons.keys())
-assert keys == ["07_translate", "12_qr_sendtophone"], keys
+assert keys == ["05_wikipedia", "07_translate", "12_qr_sendtophone"], keys
 
 def tap_translate(text):
     G.highlight.selected_text = lua.table_from({"text": text})
@@ -168,4 +169,70 @@ assert "fanyi-api.baidu.com" in s(req.url) and s(req.headers["Content-Type"]) ==
 form = parse_qs(s(req.source))
 assert form["sign"] == [md5("2015063000000001" + "hello" + form["salt"][0] + "12345678")]
 
-print("test_translate: all passed")
+# --- AI: request building and parsing ------------------------------------------
+A = lua.eval('require("sendtophone_ai")')
+assert s(A.endpoint(None)) == "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+assert s(A.endpoint(" https://api.deepseek.com/ ")) == "https://api.deepseek.com/chat/completions"
+assert s(A.endpoint("https://x.com/v1/chat/completions")) == "https://x.com/v1/chat/completions"
+req, err = P(A.buildRequest, lua.table_from({}), "q")
+assert req is None and "API Key" in s(err)
+req, err = P(A.buildRequest, lua.table_from({"key": "k1"}), '他说"你好"\n')
+body = json.loads(s(req.body))
+assert body["model"] == "glm-4-flash-250414" and body["stream"] is False and body["max_tokens"] == 800
+assert body["messages"][0]["role"] == "system" and body["messages"][1] == {"role": "user", "content": '他说"你好"\n'}
+assert s(req.headers["Authorization"]) == "Bearer k1"
+req, _ = P(A.buildRequest, lua.table_from({"key": "k", "model": "deepseek-chat", "base": "https://api.deepseek.com"}), "q")
+assert json.loads(s(req.body))["model"] == "deepseek-chat" and s(req.url) == "https://api.deepseek.com/chat/completions"
+
+aparse = lambda d, c=200: tuple(s(x) for x in P(A.parseResponse, to_lua(d), c))
+ok = {"choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "## 意思\n这里**孤独**指：\n- 一\n- 二"}}]}
+assert aparse(ok) == ("意思\n这里孤独指：\n• 一\n• 二", None), aparse(ok)
+cut = {"choices": [{"finish_reason": "length", "message": {"content": "很长"}}]}
+assert aparse(cut)[0].endswith("被截断了）")
+r, e = aparse({"error": {"code": "1000", "message": "身份验证失败"}}, 401)
+assert r is None and "API Key 不对" in e
+r, e = aparse({"error": {"code": "1302", "message": "并发数过高"}}, 429)
+assert r is None and "太频繁" in e
+r, e = aparse({"error": {"code": "1211", "message": "模型不存在"}}, 400)
+assert r is None and "模型不存在" in e and "400" in e
+r, e = aparse(None, 404)
+assert r is None and "接口地址" in e
+
+# --- AI: the 问AI button ---------------------------------------------------------
+def tap_ai(text, choice):
+    G.highlight.selected_text = lua.table_from({"text": text})
+    b = G.highlight._highlight_buttons["05_wikipedia"](G.highlight)
+    assert s(b.text) == "问AI"
+    n = len(G.shown)
+    b.callback()
+    dlg = G.shown[len(G.shown)]
+    if len(G.shown) > n and s(dlg._w) == "ButtonDialog":
+        assert s(dlg.title) == "问 AI"
+        names = [s(dlg.buttons[i][1].text) for i in range(1, len(dlg.buttons) + 1)]
+        dlg.buttons[names.index(choice) + 1][1].callback()
+    return G.shown[len(G.shown)]
+
+w = tap_ai("孤独", "查词")
+assert s(w._w) == "InfoMessage" and "API Key" in s(w.text)
+ai_menu = [sub[i] for i in range(1, len(sub) + 1) if s(sub[i].text) == "AI 设置"][0]
+ai_menu.callback()
+dlg = G.shown[len(G.shown)]
+dlg.fields[1].text = " sk-abc "
+dlg.buttons[1][2].callback()
+assert s(G.saved.ai_key) == "sk-abc" and G.saved.ai_base is None and G.saved.ai_model is None
+G.ui.doc_props = lua.table_from({"title": "百年孤独", "authors": "马尔克斯"})
+G.next_response = lambda req: (200, json.dumps(ok, ensure_ascii=False))
+w = tap_ai("孤独", "查词")
+assert s(w._w) == "TextViewer" and s(w.title) == "查词"
+assert s(w.text).startswith("意思") and s(w.text).endswith("孤独")
+req = G.requests[len(G.requests)]
+assert s(req.url) == "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+assert s(req.headers["Authorization"]) == "Bearer sk-abc"
+assert json.loads(s(req.source))["messages"][1]["content"] == "“孤独”在这里是什么意思？一句话回答（出自《百年孤独》，马尔克斯）。"
+w = tap_ai("原样", "只发原文")
+assert json.loads(s(G.requests[len(G.requests)].source))["messages"][1]["content"] == "原样"
+G.next_response = lambda req: (None, "wantread")
+w = tap_ai("x", "查词")
+assert "问 AI 失败" in s(w.text) and "超时" in s(w.text)
+
+print("test_online: all passed")

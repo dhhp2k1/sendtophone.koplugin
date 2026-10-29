@@ -48,6 +48,17 @@ KOReader 小插件：在书里划词后点"发送到手机"，文字通过 [Bark
 
 代价：问题在推送里要放两份（一份显示，一份放在链接里），能发的长度大约是原来的四分之一，中文约 280 字。超出会截断并提示。
 
+## 在 Kindle 上直接问 AI
+
+划词菜单里的"维基百科"被换成了"问AI"（维基百科在国内连不上）。点它，选一种问法，回答直接显示在 Kindle 上，不用手机。
+
+默认用智谱的 **GLM-4-Flash**，免费，国内直连：
+
+1. 在 [bigmodel.cn](https://bigmodel.cn) 用手机号注册，在"API Keys"页面创建一个 Key。
+2. Kindle 上 工具 → 发送到手机 → AI 设置，把 Key 填进第一栏，保存。
+
+接口兼容 OpenAI 格式，换成 DeepSeek、Kimi 等服务时，在 AI 设置里改接口地址、模型和 Key 就行。
+
 ## 翻译
 
 划词菜单里的"翻译"按钮被替换掉了：KOReader 自带的翻译连谷歌，在国内用不了，现在改走国内能连上的服务，结果直接显示在 Kindle 上。中文翻成英文，其他语言翻成中文。
@@ -70,7 +81,7 @@ KOReader 小插件：在书里划词后点"发送到手机"，文字通过 [Bark
 python3 -m pip install lupa==2.8
 python3 -X utf8 tests/test_core.py
 python3 -X utf8 tests/test_plugin.py
-python3 -X utf8 tests/test_translate.py
+python3 -X utf8 tests/test_online.py
 ```
 
 测试在 LuaJIT 下运行插件代码（和 Kindle 上的 KOReader 一样），KOReader 模块用假的替代。

@@ -17,6 +17,7 @@ local logger = require("logger")
 local util = require("util")
 local Core = require("sendtophone_core")
 local Translate = require("sendtophone_translate")
+local AI = require("sendtophone_ai")
 
 local SendToPhone = WidgetContainer:extend{
     name = "sendtophone",
@@ -104,6 +105,24 @@ function SendToPhone:addToHighlightDialog()
             end,
         }
     end)
+    -- Same for "Wikipedia": blocked in mainland China, so ask an AI instead.
+    self.ui.highlight:addToHighlightDialog("05_wikipedia", function(this)
+        return {
+            text = "问AI",
+            callback = function()
+                this:highlightFromHoldPos()
+                local selected = this.selected_text
+                local text = selected and selected.text and util.cleanupSelectedText(selected.text)
+                this:onClose()
+                if not text or text == "" then
+                    return
+                end
+                self:choosePreset(text, "问 AI", function(preset)
+                    self:askAI(text, preset)
+                end)
+            end,
+        }
+    end)
     -- Take over KOReader's own "Translate" slot: it uses Google, which is
     -- unreachable from mainland China.
     self.ui.highlight:addToHighlightDialog("07_translate", function(this)
@@ -144,7 +163,7 @@ local function showMessage(text, timeout)
 end
 
 --- POST body to url. Returns http code (or nil), response body, error.
-function SendToPhone:post(url, json, content_type)
+function SendToPhone:post(url, json, content_type, extra_headers, block_timeout, total_timeout)
     local ltn12 = require("ltn12")
     local socket = require("socket")
     local socketutil = require("socketutil")
@@ -155,16 +174,21 @@ function SendToPhone:post(url, json, content_type)
         requester = require("socket.http")
     end
     local sink = {}
-    socketutil:set_timeout(socketutil.LARGE_BLOCK_TIMEOUT, socketutil.LARGE_TOTAL_TIMEOUT)
+    socketutil:set_timeout(block_timeout or socketutil.LARGE_BLOCK_TIMEOUT,
+                           total_timeout or socketutil.LARGE_TOTAL_TIMEOUT)
+    local headers_out = {
+        ["Content-Type"] = content_type or "application/json; charset=utf-8",
+        ["Content-Length"] = tostring(#json),
+        ["User-Agent"] = socketutil.USER_AGENT,
+    }
+    for k, v in pairs(extra_headers or {}) do
+        headers_out[k] = v
+    end
     local ok, code, headers, status = pcall(function()
         return socket.skip(1, requester.request{
             url = url,
             method = "POST",
-            headers = {
-                ["Content-Type"] = content_type or "application/json; charset=utf-8",
-                ["Content-Length"] = tostring(#json),
-                ["User-Agent"] = socketutil.USER_AGENT,
-            },
+            headers = headers_out,
             source = ltn12.source.string(json),
             sink = socketutil.table_sink and socketutil.table_sink(sink) or ltn12.sink.table(sink),
         })
@@ -219,11 +243,17 @@ function SendToPhone:sendText(text, preset)
     })
 end
 
---- Let the user pick a way to ask, or use the first one directly.
 function SendToPhone:chooseAndSend(text)
+    self:choosePreset(text, "发送到手机", function(preset)
+        self:sendText(text, preset)
+    end)
+end
+
+--- Let the user pick a way to ask, or use the first one directly.
+function SendToPhone:choosePreset(text, title, on_choose)
     local presets = self:getPresets()
     if not self:askEachTime() then
-        self:sendText(text, presets[1])
+        on_choose(presets[1])
         return
     end
     local dialog
@@ -233,7 +263,7 @@ function SendToPhone:chooseAndSend(text)
             text = preset.name,
             callback = function()
                 UIManager:close(dialog)
-                self:sendText(text, preset)
+                on_choose(preset)
             end,
         }})
     end
@@ -242,7 +272,7 @@ function SendToPhone:chooseAndSend(text)
         callback = function() UIManager:close(dialog) end,
     }})
     dialog = ButtonDialog:new{
-        title = "发送到手机",
+        title = title,
         buttons = buttons,
     }
     UIManager:show(dialog)
@@ -291,6 +321,56 @@ function SendToPhone:translate(text)
         UIManager:show(TextViewer:new{
             title = "翻译",
             text = result .. "\n\n――――――\n" .. text,
+        })
+    end)
+end
+
+---------------------------------------------------------------------------
+-- Asking an AI on the Kindle
+---------------------------------------------------------------------------
+
+function SendToPhone:askAI(text, preset)
+    local title, author = self:getBookInfo()
+    local prompt = text
+    if preset and preset.template then
+        local template = preset.template
+        if not template:find("{text}", 1, true) then
+            template = template .. "\n{text}"
+        end
+        prompt = Core.fillTemplate(template, text, title, author)
+    end
+    local req, err = AI.buildRequest({
+        base = self.settings:readSetting("ai_base"),
+        model = self.settings:readSetting("ai_model"),
+        key = self.settings:readSetting("ai_key"),
+    }, prompt)
+    if not req then
+        showMessage(err)
+        return
+    end
+    NetworkMgr:runWhenOnline(function()
+        local busy = InfoMessage:new{ text = "AI 思考中…" }
+        UIManager:show(busy)
+        UIManager:forceRePaint()
+        local code, body, net_err = self:post(req.url, req.body, nil, req.headers, 60, 90)
+        UIManager:close(busy)
+        local answer, reason
+        if type(code) ~= "number" then
+            local _, msg = Core.interpretResponse(nil, nil, net_err)
+            reason = msg
+        else
+            local ok, data = pcall(function() return require("json").decode(body or "") end)
+            answer, reason = AI.parseResponse(ok and data or nil, code)
+        end
+        if not answer then
+            logger.warn("SendToPhone: AI failed", code, net_err, body)
+            showMessage("问 AI 失败\n\n" .. reason)
+            return
+        end
+        local TextViewer = require("ui/widget/textviewer")
+        UIManager:show(TextViewer:new{
+            title = preset and preset.name or "问 AI",
+            text = answer .. "\n\n――――――\n" .. text,
         })
     end)
 end
@@ -366,6 +446,13 @@ function SendToPhone:addToMainMenu(menu_items)
                 text = "翻译设置",
                 sub_item_table_func = function()
                     return self:translateMenuItems()
+                end,
+            },
+            {
+                text = "AI 设置",
+                keep_menu_open = true,
+                callback = function()
+                    self:editAI()
                 end,
             },
         },
@@ -510,6 +597,55 @@ function SendToPhone:editBaiduKeys(touchmenu_instance)
                         touchmenu_instance:updateItems()
                     end
                     showMessage("已保存，翻译会改用百度", 2)
+                end,
+            },
+        }},
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
+end
+
+function SendToPhone:editAI()
+    local dialog
+    dialog = MultiInputDialog:new{
+        title = "AI 设置",
+        fields = {
+            {
+                text = self.settings:readSetting("ai_key") or "",
+                hint = "API Key",
+                description = "默认用智谱 GLM-4-Flash（免费）：在 bigmodel.cn 注册，到“API Keys”页面创建一个 Key 填在这里。",
+            },
+            {
+                text = self.settings:readSetting("ai_base") or "",
+                hint = "接口地址（留空 = " .. AI.DEFAULT_BASE .. "）",
+            },
+            {
+                text = self.settings:readSetting("ai_model") or "",
+                hint = "模型（留空 = " .. AI.DEFAULT_MODEL .. "）",
+                description = "换成 DeepSeek、Kimi 等兼容 OpenAI 格式的服务时，改接口地址、模型和 Key 就行。",
+            },
+        },
+        buttons = {{
+            {
+                text = "取消",
+                id = "close",
+                callback = function() UIManager:close(dialog) end,
+            },
+            {
+                text = "保存",
+                callback = function()
+                    local fields = dialog:getFields()
+                    local function clean(v)
+                        v = (v or ""):gsub("%s", "")
+                        if v == "" then return nil end
+                        return v
+                    end
+                    self.settings:saveSetting("ai_key", clean(fields[1]))
+                    self.settings:saveSetting("ai_base", clean(fields[2]))
+                    self.settings:saveSetting("ai_model", clean(fields[3]))
+                    self.settings:flush()
+                    UIManager:close(dialog)
+                    showMessage("已保存", 1)
                 end,
             },
         }},
