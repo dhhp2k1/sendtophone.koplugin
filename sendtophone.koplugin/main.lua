@@ -295,11 +295,19 @@ end
 ---------------------------------------------------------------------------
 
 function SendToPhone:getEngine()
-    return self.settings:readSetting("translate_engine") or "edge"
+    return self.settings:readSetting("translate_engine") or "ai"
 end
 
 function SendToPhone:translate(text)
     local engine = self:getEngine()
+    if engine == "ai" then
+        return self:askAI(text, nil, {
+            prompt = Translate.aiPrompt(text),
+            title = "翻译",
+            busy = "翻译中…",
+            failed = "翻译失败",
+        })
+    end
     local req, err = Translate.buildRequest(engine, text, {
         appid = self.settings:readSetting("baidu_appid"),
         secret = self.settings:readSetting("baidu_secret"),
@@ -341,10 +349,14 @@ end
 -- Asking an AI on the Kindle
 ---------------------------------------------------------------------------
 
-function SendToPhone:askAI(text, preset)
+-- how: optional {prompt, title, busy, failed} for other uses such as
+-- translation; those never search the web.
+function SendToPhone:askAI(text, preset, how)
     local title, author = self:getBookInfo()
     local prompt = text
-    if preset and preset.template then
+    if how then
+        prompt = how.prompt
+    elseif preset and preset.template then
         local template = preset.template
         if not template:find("{text}", 1, true) then
             template = template .. "\n{text}"
@@ -360,7 +372,7 @@ function SendToPhone:askAI(text, preset)
         showMessage(err)
         return
     end
-    local search = self:searchEnabled()
+    local search = not how and self:searchEnabled()
     if search and not AI.isDeepSeek(self.settings:readSetting("ai_base")) then
         showMessage("联网搜索只支持 DeepSeek，请在 AI 设置里换回 DeepSeek，或者关掉“问AI 时先联网搜索”。")
         return
@@ -393,7 +405,7 @@ function SendToPhone:askAI(text, preset)
                 }, AI.withSources(prompt, results))
             end
         end
-        local busy = InfoMessage:new{ text = "AI 思考中…" }
+        local busy = InfoMessage:new{ text = how and how.busy or "AI 思考中…" }
         UIManager:show(busy)
         UIManager:forceRePaint()
         local code, body, net_err = self:post(req.url, req.body, nil, req.headers, 60, 90)
@@ -408,7 +420,7 @@ function SendToPhone:askAI(text, preset)
         end
         if not answer then
             logger.warn("SendToPhone: AI failed", code, net_err, body)
-            showMessage("问 AI 失败\n\n" .. reason)
+            showMessage((how and how.failed or "问 AI 失败") .. "\n\n" .. reason)
             return
         end
         local parts = { answer }
@@ -422,7 +434,7 @@ function SendToPhone:askAI(text, preset)
         table.insert(parts, "――――――\n" .. text)
         local TextViewer = require("ui/widget/textviewer")
         UIManager:show(TextViewer:new{
-            title = preset and preset.name or "问 AI",
+            title = how and how.title or preset and preset.name or "问 AI",
             text = table.concat(parts, "\n\n"),
         })
     end)

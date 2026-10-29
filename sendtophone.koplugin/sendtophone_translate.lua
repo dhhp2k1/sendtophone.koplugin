@@ -2,10 +2,13 @@
 Translation services that work from mainland China, for the "翻译" button.
 Pure request building and response parsing; the plugin does the HTTP.
 
+- "ai": the AI from AI 设置 (DeepSeek by default). Best quality, about 0.2
+  fen per call, reachable from mainland China. Default.
 - "edge": Microsoft Edge's built-in translator endpoint. Free, no key, but
   unofficial: POST a JSON array of strings to
   https://edge.microsoft.com/translate/translatetext?to=zh-Hans
-  (the older translate/auth token flow was retired in 2026).
+  (the older translate/auth token flow was retired in 2026). Reset by the
+  network on at least one mainland China connection (2026-10-29).
 - "baidu": Baidu Translate open platform (fanyi-api.baidu.com). Official and
   stable; needs an APP ID and key from the user (standard tier is free).
 --]]
@@ -13,7 +16,8 @@ Pure request building and response parsing; the plugin does the HTTP.
 local Translate = {}
 
 Translate.ENGINES = {
-    { id = "edge", name = "微软翻译（免费，无需设置）" },
+    { id = "ai", name = "AI 翻译（用 AI 设置里的 Key，默认）" },
+    { id = "edge", name = "微软翻译（免费，国内可能连不上）" },
     { id = "baidu", name = "百度翻译（需要 APP ID 和密钥）" },
 }
 
@@ -36,6 +40,12 @@ function Translate.isMostlyCJK(s)
     end
     -- One Chinese character carries about as much as a short word.
     return cjk * 4 > latin
+end
+
+--- Prompt for the "ai" engine.
+function Translate.aiPrompt(text)
+    local lang = Translate.isMostlyCJK(text) and "英文" or "简体中文"
+    return "把下面的文字翻译成" .. lang .. "。只输出译文，不要解释，不要加引号：\n" .. text
 end
 
 --- Language codes for each engine: Chinese text goes to English, the rest to Chinese.

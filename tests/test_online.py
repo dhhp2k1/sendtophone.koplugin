@@ -131,6 +131,7 @@ def tap_translate(text):
     b.callback()
     return G.shown[len(G.shown)]
 
+G.saved.translate_engine = "edge"
 G.next_response = lambda req: (200, json.dumps([{"translations": [{"text": "意外发现珍奇事物的本领"}]}], ensure_ascii=False))
 w = tap_translate("serendipity")
 assert s(w._w) == "TextViewer" and s(w.text).startswith("意外发现珍奇事物的本领") and s(w.text).endswith("serendipity")
@@ -151,11 +152,12 @@ G.plugin.addToMainMenu(G.plugin, items)
 sub = items.sendtophone.sub_item_table
 tr = [sub[i] for i in range(1, len(sub) + 1) if s(sub[i].text) == "翻译设置"][0]
 tmenu = tr.sub_item_table_func()
-assert tmenu[1].checked_func() is True and tmenu[2].checked_func() is False
-w = (tmenu[2].callback(), tap_translate("hello"))[1]
+assert [s(tmenu[i].text) for i in range(1, 4)][0].startswith("AI 翻译")
+assert tmenu[1].checked_func() is False and tmenu[2].checked_func() is True
+w = (tmenu[3].callback(), tap_translate("hello"))[1]
 assert "APP ID" in s(w.text), s(w.text)
 lua.execute("tm = { updateItems = function() end }")
-tmenu[3].callback(G.tm)
+tmenu[4].callback(G.tm)
 dlg = G.shown[len(G.shown)]
 dlg.fields[1].text = " 2015063000000001 "
 dlg.fields[2].text = "12345678"
@@ -299,5 +301,21 @@ dlg.fields[2].text = "https://open.bigmodel.cn/api/paas/v4"
 dlg.buttons[1][2].callback()
 w = tap_ai("马孔多", "查词")
 assert "只支持 DeepSeek" in s(w.text) and len(G.requests) == dlg_n
+
+# --- translate through the AI (the default engine) ------------------------------
+assert s(T.aiPrompt("hello")).startswith("把下面的文字翻译成简体中文") and s(T.aiPrompt("你好")).startswith("把下面的文字翻译成英文")
+G.saved.translate_engine = None
+G.saved.ai_base = None
+n0 = len(G.requests)
+G.next_response = lambda req: (200, json.dumps({"choices": [{"finish_reason": "stop", "message": {"content": "意外之喜"}}]}, ensure_ascii=False))
+w = tap_translate("serendipity")
+assert len(G.requests) == n0 + 1, "no web search for translation"
+req = G.requests[len(G.requests)]
+assert s(req.url) == "https://api.deepseek.com/chat/completions"
+assert json.loads(s(req.source))["messages"][1]["content"].endswith("：\nserendipity")
+assert s(w._w) == "TextViewer" and s(w.title) == "翻译" and s(w.text) == "意外之喜\n\n――――――\nserendipity"
+G.next_response = lambda req: (None, "connection reset by peer")
+w = tap_translate("x")
+assert s(w.text).startswith("翻译失败")
 
 print("test_online: all passed")
