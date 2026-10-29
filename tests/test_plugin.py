@@ -39,6 +39,7 @@ package.loaded["luasettings"] = { open = function(_, path)
     saveSetting = function(_, k, v) saved[k] = v end,
     delSetting = function(_, k) saved[k] = nil end,
     nilOrTrue = function(_, k) return saved[k] ~= false end,
+    isTrue = function(_, k) return saved[k] == true end,
     flush = function() flushed = true end,
   } end }
 package.loaded["ltn12"] = {
@@ -206,6 +207,32 @@ G.saved.server = "http://192.168.1.5:8080"
 press_highlight("lan")
 assert s(G.requests[len(G.requests)].scheme) == "http"
 assert s(G.requests[len(G.requests)].url) == "http://192.168.1.5:8080/push"
+
+# --- tap-to-run-shortcut option ---------------------------------------------
+G.saved.server = "https://api.day.app"
+items = menu_items()
+sc_toggle, sc_name = items.sub_item_table[5], items.sub_item_table[6]
+assert s(sc_toggle.text) == "点通知后运行快捷指令"
+assert sc_toggle.checked_func() is False and sc_name.enabled_func() is False
+press_highlight("无快捷指令")
+assert "url" not in json.loads(s(G.requests[len(G.requests)].source))
+sc_toggle.callback()
+assert sc_toggle.checked_func() is True and sc_name.enabled_func() is True
+assert s(sc_name.text_func()) == "快捷指令名称：问AI"
+press_highlight("跑快捷指令")
+p = json.loads(s(G.requests[len(G.requests)].source))
+assert p["url"].startswith("shortcuts://run-shortcut?name=%E9%97%AEAI&input=text&text="), p["url"]
+sc_name.callback(tm)
+dlg = G.shown[len(G.shown)]
+dlg.input = "  "
+dlg.buttons[1][2].callback()
+assert "不能为空" in last_text()
+dlg.input = " Ask Claude "
+dlg.buttons[1][2].callback()
+assert s(G.saved.shortcut_name) == "Ask Claude"
+press_highlight("x")
+assert "name=Ask%20Claude&" in json.loads(s(G.requests[len(G.requests)].source))["url"]
+sc_toggle.callback()
 
 # --- empty selection sends nothing ----------------------------------------
 n = len(G.requests)

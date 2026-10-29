@@ -132,6 +132,34 @@ assert json.loads(lua_str(req.json))["body"] == "请解释：\n原文"
 req = Core.buildRequest(conf, lua.table_from({"text": "a\tb\x01c\\d"}))
 assert json.loads(lua_str(req.json))["body"] == "a\tb\x01c\\d"
 
+# --- tapping the notification runs an iOS shortcut ---------------------------
+from urllib.parse import urlparse, parse_qs
+sc = lua.table_from({"server": "https://api.day.app", "key": KEY, "shortcut": "问AI"})
+req = Core.buildRequest(sc, lua.table_from({"text": "a&b=c 中文", "title": "书", "template": T}))
+payload = json.loads(lua_str(req.json))
+u = urlparse(payload["url"])
+assert u.scheme == "shortcuts" and u.netloc == "run-shortcut", payload["url"]
+q = parse_qs(u.query)
+assert q == {"name": ["问AI"], "input": ["text"], "text": [payload["body"]]}, q
+assert payload["body"] == "请结合上下文解释下面这段文字（出自《书》）：\na&b=c 中文"
+# both copies of the text fit in the APNs budget
+req = Core.buildRequest(sc, lua.table_from({"text": "长" * 3000, "template": T}))
+payload = json.loads(lua_str(req.json))
+assert req.truncated
+assert parse_qs(urlparse(payload["url"]).query)["text"] == [payload["body"]]
+apns = json.dumps({"aps": {"alert": {"title": payload["title"], "body": payload["body"]},
+                           "sound": "1107.caf", "category": "myNotificationCategory",
+                           "mutable-content": 1, "thread-id": "Kindle"},
+                   "group": "Kindle", "autocopy": "1", "url": payload["url"]}, ensure_ascii=False)
+apns = apns.replace("&", "\\u0026")  # Go escapes & in JSON
+assert len(apns.encode("utf-8")) < 4096, len(apns.encode("utf-8"))
+assert len(payload["body"]) > 250, len(payload["body"])  # still a useful paragraph
+# no shortcut configured: no url field
+req = Core.buildRequest(conf, lua.table_from({"text": "x"}))
+assert "url" not in json.loads(lua_str(req.json))
+assert lua_str(Core.urlEncode("a b&中")) == "a%20b%26%E4%B8%AD"
+assert Core.urlCost("a b") == 5
+
 # --- Interpreting responses -------------------------------------------------
 def interp(*a):
     ok, m = P(Core.interpretResponse, *a)

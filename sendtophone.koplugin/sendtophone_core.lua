@@ -229,20 +229,36 @@ function Core.jsonCost(s)
     return n
 end
 
---- Cut s so that jsonCost(result) <= budget, on a character boundary.
--- Adds an ellipsis when something was cut.
+--- Bytes s takes once percent-encoded into a URL query value.
+function Core.urlCost(s)
+    local n = 0
+    for i = 1, #s do
+        n = n + (s:sub(i, i):match("[%w%-%._~]") and 1 or 3)
+    end
+    return n
+end
+
+function Core.urlEncode(s)
+    return (s:gsub("[^%w%-%._~]", function(c)
+        return string.format("%%%02X", c:byte())
+    end))
+end
+
+--- Cut s so that cost(result) <= budget, on a character boundary.
+-- cost defaults to jsonCost. Adds an ellipsis when something was cut.
 -- @treturn string
 -- @treturn bool truncated
-function Core.truncate(s, budget)
-    if Core.jsonCost(s) <= budget then
+function Core.truncate(s, budget, cost_fn)
+    cost_fn = cost_fn or Core.jsonCost
+    if cost_fn(s) <= budget then
         return s, false
     end
-    local limit = budget - #Core.ELLIPSIS
+    local limit = budget - cost_fn(Core.ELLIPSIS)
     local n, i, len = 0, 1, #s
     local cut = 0
     while i <= len do
         local cl = charLen(s:byte(i))
-        local cost = Core.jsonCost(s:sub(i, i + cl - 1))
+        local cost = cost_fn(s:sub(i, i + cl - 1))
         if n + cost > limit then
             break
         end
@@ -271,8 +287,9 @@ end
 -- @tparam table opts {text, title, author, template (nil = send raw text)}
 -- @treturn string body
 -- @treturn bool truncated
-function Core.buildBody(opts, budget)
+function Core.buildBody(opts, budget, cost_fn)
     budget = budget or Core.PAYLOAD_BUDGET
+    cost_fn = cost_fn or Core.jsonCost
     local text = opts.text or ""
     local template = opts.template
     if not template or not template:find("{text}", 1, true) then
@@ -282,15 +299,15 @@ function Core.buildBody(opts, budget)
         end
     end
     if not template then
-        return Core.truncate(text, budget)
+        return Core.truncate(text, budget, cost_fn)
     end
     local frame = Core.fillTemplate(template, "", opts.title, opts.author)
-    local text_budget = budget - Core.jsonCost(frame)
+    local text_budget = budget - cost_fn(frame)
     if text_budget < 50 then
         -- The template alone is huge; fall back to cutting the whole thing.
-        return Core.truncate(Core.fillTemplate(template, text, opts.title, opts.author), budget)
+        return Core.truncate(Core.fillTemplate(template, text, opts.title, opts.author), budget, cost_fn)
     end
-    local cut, truncated = Core.truncate(text, text_budget)
+    local cut, truncated = Core.truncate(text, text_budget, cost_fn)
     return Core.fillTemplate(template, cut, opts.title, opts.author), truncated
 end
 
@@ -321,14 +338,28 @@ function Core.encodeJSON(t)
     return "{" .. table.concat(parts, ",") .. "}"
 end
 
+--- Link that runs an iOS shortcut with text as its input.
+function Core.shortcutPrefix(name)
+    return "shortcuts://run-shortcut?name=" .. Core.urlEncode(name) .. "&input=text&text="
+end
+
 --- Everything needed for one push.
--- @tparam table conf {server, key, group}
+-- When conf.shortcut names an iOS shortcut, tapping the notification runs it
+-- with the body as input. The body then appears twice in the APNs payload
+-- (once as text, once percent-encoded in the link), so both count to the budget.
+-- @tparam table conf {server, key, group, shortcut}
 -- @tparam table msg {text, title, author, template}
 -- @treturn table {url, json, truncated, body}
 function Core.buildRequest(conf, msg)
     local title = Core.notificationTitle(msg.title)
     local budget = Core.PAYLOAD_BUDGET - Core.jsonCost(title)
-    local body, truncated = Core.buildBody(msg, budget)
+    local prefix, cost_fn
+    if conf.shortcut and conf.shortcut ~= "" then
+        prefix = Core.shortcutPrefix(conf.shortcut)
+        budget = budget - Core.jsonCost(prefix)
+        cost_fn = function(str) return Core.jsonCost(str) + Core.urlCost(str) end
+    end
+    local body, truncated = Core.buildBody(msg, budget, cost_fn)
     local payload = {
         device_key = conf.key,
         title = title,
@@ -336,6 +367,9 @@ function Core.buildRequest(conf, msg)
         group = conf.group or Core.DEFAULT_GROUP,
         autoCopy = "1",
     }
+    if prefix then
+        payload.url = prefix .. Core.urlEncode(body)
+    end
     return {
         url = conf.server .. "/push",
         json = Core.encodeJSON(payload),

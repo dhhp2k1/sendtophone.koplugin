@@ -21,6 +21,7 @@ local SendToPhone = WidgetContainer:extend{
 }
 
 local SETTINGS_FILE = DataStorage:getSettingsDir() .. "/sendtophone.lua"
+local DEFAULT_SHORTCUT = "问AI"
 
 function SendToPhone:init()
     self.settings = LuaSettings:open(SETTINGS_FILE)
@@ -40,7 +41,20 @@ function SendToPhone:getConf()
     if not server or not key then
         return nil
     end
-    return { server = server, key = key, group = Core.DEFAULT_GROUP }
+    return {
+        server = server,
+        key = key,
+        group = Core.DEFAULT_GROUP,
+        shortcut = self:shortcutEnabled() and self:getShortcutName() or nil,
+    }
+end
+
+function SendToPhone:shortcutEnabled()
+    return self.settings:isTrue("shortcut_enabled")
+end
+
+function SendToPhone:getShortcutName()
+    return self.settings:readSetting("shortcut_name") or DEFAULT_SHORTCUT
 end
 
 function SendToPhone:templateEnabled()
@@ -216,6 +230,26 @@ function SendToPhone:addToMainMenu(menu_items)
                 callback = function()
                     self:editTemplate()
                 end,
+                separator = true,
+            },
+            {
+                text = "点通知后运行快捷指令",
+                help_text = "打开后，在 iPhone 上点 Bark 通知会运行同名的快捷指令，选中的文字作为输入，可以在快捷指令里直接问 ChatGPT 或 Claude。\n\n链接里也要放一份文字，所以能发送的长度大约减少到原来的四分之一。",
+                checked_func = function() return self:shortcutEnabled() end,
+                callback = function()
+                    self.settings:saveSetting("shortcut_enabled", not self:shortcutEnabled())
+                    self.settings:flush()
+                end,
+            },
+            {
+                text_func = function()
+                    return "快捷指令名称：" .. self:getShortcutName()
+                end,
+                keep_menu_open = true,
+                enabled_func = function() return self:shortcutEnabled() end,
+                callback = function(touchmenu_instance)
+                    self:editShortcutName(touchmenu_instance)
+                end,
             },
         },
     }
@@ -252,6 +286,41 @@ function SendToPhone:editAddress(touchmenu_instance)
                         touchmenu_instance:updateItems()
                     end
                     showMessage("已保存。可以点“发送测试推送”试一下。", 2)
+                end,
+            },
+        }},
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
+end
+
+function SendToPhone:editShortcutName(touchmenu_instance)
+    local dialog
+    dialog = InputDialog:new{
+        title = "快捷指令名称",
+        input = self:getShortcutName(),
+        description = "要和 iPhone 快捷指令 App 里的名字完全一样。",
+        buttons = {{
+            {
+                text = "取消",
+                id = "close",
+                callback = function() UIManager:close(dialog) end,
+            },
+            {
+                text = "保存",
+                is_enter_default = true,
+                callback = function()
+                    local name = dialog:getInputText():gsub("^%s+", ""):gsub("%s+$", "")
+                    if name == "" then
+                        showMessage("名称不能为空")
+                        return
+                    end
+                    self.settings:saveSetting("shortcut_name", name)
+                    self.settings:flush()
+                    UIManager:close(dialog)
+                    if touchmenu_instance then
+                        touchmenu_instance:updateItems()
+                    end
                 end,
             },
         }},
