@@ -178,7 +178,7 @@ req, err = P(A.buildRequest, lua.table_from({}), "q")
 assert req is None and "API Key" in s(err)
 req, err = P(A.buildRequest, lua.table_from({"key": "k1"}), '他说"你好"\n')
 body = json.loads(s(req.body))
-assert body["model"] == "deepseek-v4-pro" and body["stream"] is False and body["max_tokens"] == 800
+assert body["model"] == "deepseek-flash" and body["stream"] is False and body["max_tokens"] == 800
 assert body["thinking"] == {"type": "disabled"}
 assert body["messages"][0]["role"] == "system" and body["messages"][1] == {"role": "user", "content": '他说"你好"\n'}
 assert s(req.headers["Authorization"]) == "Bearer k1"
@@ -239,5 +239,66 @@ assert json.loads(s(G.requests[len(G.requests)].source))["messages"][1]["content
 G.next_response = lambda req: (None, "wantread")
 w = tap_ai("x", "查词")
 assert "问 AI 失败" in s(w.text) and "超时" in s(w.text)
+
+# --- AI: web search first -------------------------------------------------------
+assert s(A.utf8Head("中文abc", 3)) == "中文a" and s(A.utf8Head("ab", 5)) == "ab"
+assert A.isDeepSeek(None) and not A.isDeepSeek("https://open.bigmodel.cn/api/paas/v4")
+sreq = A.buildSearchRequest("k", "长" * 200, "问\n题")
+sb = json.loads(s(sreq.body))
+assert s(sreq.url) == "https://api.deepseek.com/v1/tools/search" and len(sb["query"]) == 128
+assert sb["count"] == 5 and sb["ori_question"] == "问 题" and s(sreq.headers["Authorization"]) == "Bearer k"
+found = {"results": [
+    {"title": "马孔多", "url": "https://baike.example.com/macondo", "snippet": "短", "summary": "马孔多是小说中的虚构小镇。", "site_name": "百科"},
+    {"title": "第二条", "url": "https://news.example.org/a/b", "snippet": "只有摘要", "summary": "", "site_name": None},
+]}
+res, e = P(A.parseSearch, to_lua(found), 200)
+assert e is None and len(res) == 2 and s(res[1].text) == "马孔多是小说中的虚构小镇。" and s(res[2].text) == "只有摘要"
+assert "[1] 马孔多：马孔多" in s(A.withSources("什么是马孔多", res)) and s(A.withSources("什么是马孔多", res)).endswith("问题：什么是马孔多")
+assert s(A.sourceList(res)) == "来源：\n[1] 马孔多（百科）\n[2] 第二条（news.example.org）"
+res, e = P(A.parseSearch, to_lua({"results": []}), 200)
+assert len(res) == 0 and A.sourceList(res) is None
+res, e = P(A.parseSearch, to_lua({"error": {"message": "Insufficient Balance"}}), 402)
+assert res is None and "余额不足" in s(e)
+
+search_item = [sub[i] for i in range(1, len(sub) + 1) if s(sub[i].text) == "问AI 时先联网搜索"][0]
+assert not search_item.checked_func()
+search_item.callback()
+assert search_item.checked_func()
+
+def route(found_body, found_code=200):
+    def f(req):
+        if "tools/search" in s(req.url):
+            return (found_code, json.dumps(found_body, ensure_ascii=False))
+        return (200, json.dumps(ok, ensure_ascii=False))
+    return f
+
+n0 = len(G.requests)
+G.next_response = route(found)
+w = tap_ai("马孔多", "查词")
+assert len(G.requests) == n0 + 2
+assert "tools/search" in s(G.requests[n0 + 1].url)
+q = json.loads(s(G.requests[n0 + 2].source))["messages"][1]["content"]
+assert q.startswith("下面是联网搜索到的资料") and "[2] 第二条：只有摘要" in q and q.endswith("问题：“马孔多”在这里是什么意思？一句话回答（出自《百年孤独》，马尔克斯）。")
+t = s(w.text)
+assert t.startswith("意思") and "来源：\n[1] 马孔多（百科）" in t and t.endswith("马孔多")
+
+# Search fails or finds nothing: still answer, say why.
+G.next_response = route({"results": []})
+t = s(tap_ai("马孔多", "查词").text)
+assert t.startswith("（联网没搜到") and "来源" not in t
+G.next_response = route({"error": {"message": "Insufficient Balance"}}, 402)
+t = s(tap_ai("马孔多", "查词").text)
+assert t.startswith("（联网搜索：账户余额不足。）")
+assert json.loads(s(G.requests[len(G.requests)].source))["messages"][1]["content"].startswith("“马孔多”")
+
+# Search only with DeepSeek.
+G.settings_store_base = None
+dlg_n = len(G.requests)
+ai_menu.callback()
+dlg = G.shown[len(G.shown)]
+dlg.fields[2].text = "https://open.bigmodel.cn/api/paas/v4"
+dlg.buttons[1][2].callback()
+w = tap_ai("马孔多", "查词")
+assert "只支持 DeepSeek" in s(w.text) and len(G.requests) == dlg_n
 
 print("test_online: all passed")

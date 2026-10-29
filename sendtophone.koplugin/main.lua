@@ -348,7 +348,39 @@ function SendToPhone:askAI(text, preset)
         showMessage(err)
         return
     end
+    local search = self:searchEnabled()
+    if search and not AI.isDeepSeek(self.settings:readSetting("ai_base")) then
+        showMessage("联网搜索只支持 DeepSeek，请在 AI 设置里换回 DeepSeek，或者关掉“问AI 时先联网搜索”。")
+        return
+    end
     NetworkMgr:runWhenOnline(function()
+        local results, search_note
+        if search then
+            local busy = InfoMessage:new{ text = "联网搜索中…" }
+            UIManager:show(busy)
+            UIManager:forceRePaint()
+            local sreq = AI.buildSearchRequest(self.settings:readSetting("ai_key"), text, prompt)
+            local code, body, net_err = self:post(sreq.url, sreq.body, nil, sreq.headers, 15, 30)
+            UIManager:close(busy)
+            if type(code) ~= "number" then
+                local _, msg = Core.interpretResponse(nil, nil, net_err)
+                search_note = "联网搜索失败：" .. msg
+            else
+                local ok, data = pcall(function() return require("json").decode(body or "") end)
+                results, search_note = AI.parseSearch(ok and data or nil, code)
+            end
+            if not results then
+                logger.warn("SendToPhone: search failed", code, net_err, body)
+            elseif #results == 0 then
+                search_note = "联网没搜到相关资料，下面是 AI 自己的回答。"
+            else
+                req = AI.buildRequest({
+                    base = self.settings:readSetting("ai_base"),
+                    model = self.settings:readSetting("ai_model"),
+                    key = self.settings:readSetting("ai_key"),
+                }, AI.withSources(prompt, results))
+            end
+        end
         local busy = InfoMessage:new{ text = "AI 思考中…" }
         UIManager:show(busy)
         UIManager:forceRePaint()
@@ -367,12 +399,25 @@ function SendToPhone:askAI(text, preset)
             showMessage("问 AI 失败\n\n" .. reason)
             return
         end
+        local parts = { answer }
+        if search_note then
+            table.insert(parts, 1, "（" .. search_note .. "）")
+        end
+        local sources = AI.sourceList(results)
+        if sources then
+            table.insert(parts, sources)
+        end
+        table.insert(parts, "――――――\n" .. text)
         local TextViewer = require("ui/widget/textviewer")
         UIManager:show(TextViewer:new{
             title = preset and preset.name or "问 AI",
-            text = answer .. "\n\n――――――\n" .. text,
+            text = table.concat(parts, "\n\n"),
         })
     end)
+end
+
+function SendToPhone:searchEnabled()
+    return self.settings:isTrue("ai_search")
 end
 
 ---------------------------------------------------------------------------
@@ -453,6 +498,15 @@ function SendToPhone:addToMainMenu(menu_items)
                 keep_menu_open = true,
                 callback = function()
                     self:editAI()
+                end,
+            },
+            {
+                text = "问AI 时先联网搜索",
+                help_text = "打开后，问 AI 前先用 DeepSeek 的搜索接口查一下选中的文字，把搜到的资料交给 AI 参考，回答下面列出来源。适合人名、事件、新词。\n\n每次搜索另收约 0.5 分钱（DeepSeek 按每千次 5 元收费，没搜到不收），只支持 DeepSeek 的 Key。",
+                checked_func = function() return self:searchEnabled() end,
+                callback = function()
+                    self.settings:saveSetting("ai_search", not self:searchEnabled())
+                    self.settings:flush()
                 end,
             },
         },
@@ -613,7 +667,7 @@ function SendToPhone:editAI()
             {
                 text = self.settings:readSetting("ai_key") or "",
                 hint = "API Key",
-                description = "默认用 DeepSeek V4 Pro（每问约 1 分钱）：在 platform.deepseek.com 注册并充值，到“API Keys”页面创建一个 Key 填在这里。",
+                description = "默认用 DeepSeek 的 deepseek-flash（每问不到 1 分钱）：在 platform.deepseek.com 注册并充值，到“API Keys”页面创建一个 Key 填在这里。",
             },
             {
                 text = self.settings:readSetting("ai_base") or "",
