@@ -3,7 +3,10 @@ Translation services that work from mainland China, for the "翻译" button.
 Pure request building and response parsing; the plugin does the HTTP.
 
 - "ai": the AI from AI 设置 (DeepSeek by default). Best quality, about 0.2
-  fen per call, reachable from mainland China. Default.
+  fen per call, reachable from mainland China. Default; falls back to
+  "bilibili" when it fails.
+- "bilibili": Bilibili's free Index-Translate model, no key. Official but new
+  (2026-10) and without published limits.
 - "edge": Microsoft Edge's built-in translator endpoint. Free, no key, but
   unofficial: POST a JSON array of strings to
   https://edge.microsoft.com/translate/translatetext?to=zh-Hans
@@ -16,7 +19,8 @@ Pure request building and response parsing; the plugin does the HTTP.
 local Translate = {}
 
 Translate.ENGINES = {
-    { id = "ai", name = "AI 翻译（用 AI 设置里的 Key，默认）" },
+    { id = "ai", name = "AI 翻译（用 AI 设置里的 Key，失败时改用 B站）" },
+    { id = "bilibili", name = "B站翻译（免费，无需设置）" },
     { id = "edge", name = "微软翻译（免费，国内可能连不上）" },
     { id = "baidu", name = "百度翻译（需要 APP ID 和密钥）" },
 }

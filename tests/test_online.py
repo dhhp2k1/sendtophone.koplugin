@@ -153,11 +153,12 @@ sub = items.sendtophone.sub_item_table
 tr = [sub[i] for i in range(1, len(sub) + 1) if s(sub[i].text) == "翻译设置"][0]
 tmenu = tr.sub_item_table_func()
 assert [s(tmenu[i].text) for i in range(1, 4)][0].startswith("AI 翻译")
-assert tmenu[1].checked_func() is False and tmenu[2].checked_func() is True
-w = (tmenu[3].callback(), tap_translate("hello"))[1]
+assert s(tmenu[2].text).startswith("B站翻译")
+assert tmenu[1].checked_func() is False and tmenu[3].checked_func() is True
+w = (tmenu[4].callback(), tap_translate("hello"))[1]
 assert "APP ID" in s(w.text), s(w.text)
 lua.execute("tm = { updateItems = function() end }")
-tmenu[4].callback(G.tm)
+tmenu[5].callback(G.tm)
 dlg = G.shown[len(G.shown)]
 dlg.fields[1].text = " 2015063000000001 "
 dlg.fields[2].text = "12345678"
@@ -314,8 +315,39 @@ req = G.requests[len(G.requests)]
 assert s(req.url) == "https://api.deepseek.com/chat/completions"
 assert json.loads(s(req.source))["messages"][1]["content"].endswith("：\nserendipity")
 assert s(w._w) == "TextViewer" and s(w.title) == "翻译" and s(w.text) == "意外之喜\n\n――――――\nserendipity"
+# DeepSeek fails: fall back to Bilibili's free model, and say so.
+def by_host(deepseek, bili):
+    return lambda req: deepseek if "deepseek" in s(req.url) else bili
+bili_ok = (200, json.dumps({"choices": [{"finish_reason": "stop", "message": {"content": "<think>\n</think>\n\n意外发现"}}]}, ensure_ascii=False))
+n0 = len(G.requests)
+G.next_response = by_host((402, json.dumps({"error": {"message": "Insufficient Balance"}})), bili_ok)
+w = tap_translate("serendipity")
+assert len(G.requests) == n0 + 2
+breq = G.requests[len(G.requests)]
+assert s(breq.url) == "https://index-translate.bilibili.com/v1/chat/completions" and breq.headers["Authorization"] is None
+bb = json.loads(s(breq.source))
+assert bb["model"] == "Index-Translate-35B-A3B" and bb["chat_template_kwargs"] == {"enable_thinking": False}
+assert len(bb["messages"]) == 1 and bb["messages"][0]["content"].endswith("serendipity")
+assert s(w.text) == "（AI 翻译失败，已改用 B站免费翻译：AI 账户余额不足，请到服务商网站充值。）\n\n意外发现\n\n――――――\nserendipity", s(w.text)
+# both fail
 G.next_response = lambda req: (None, "connection reset by peer")
 w = tap_translate("x")
-assert s(w.text).startswith("翻译失败")
+assert s(w.text).startswith("翻译失败") and "B站免费翻译也失败了" in s(w.text)
+# no key at all: straight to Bilibili
+key = G.saved.ai_key
+G.saved.ai_key = None
+n0 = len(G.requests)
+G.next_response = by_host(None, bili_ok)
+w = tap_translate("serendipity")
+assert len(G.requests) == n0 + 1 and "改用 B站" in s(w.text) and "意外发现" in s(w.text)
+G.saved.ai_key = key
+# Bilibili chosen directly: one request, no note
+G.saved.translate_engine = "bilibili"
+n0 = len(G.requests)
+w = tap_translate("serendipity")
+assert len(G.requests) == n0 + 1 and s(w.text) == "意外发现\n\n――――――\nserendipity"
+# an unclosed thinking block is not an answer
+r, e = aparse({"choices": [{"finish_reason": "stop", "message": {"content": "<think>还在想"}}]})
+assert r is None
 
 print("test_online: all passed")

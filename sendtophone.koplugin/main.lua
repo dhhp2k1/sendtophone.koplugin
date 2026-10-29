@@ -300,13 +300,8 @@ end
 
 function SendToPhone:translate(text)
     local engine = self:getEngine()
-    if engine == "ai" then
-        return self:askAI(text, nil, {
-            prompt = Translate.aiPrompt(text),
-            title = "翻译",
-            busy = "翻译中…",
-            failed = "翻译失败",
-        })
+    if engine == "ai" or engine == "bilibili" then
+        return self:translateWithAI(text, engine)
     end
     local req, err = Translate.buildRequest(engine, text, {
         appid = self.settings:readSetting("baidu_appid"),
@@ -345,18 +340,74 @@ function SendToPhone:translate(text)
     end)
 end
 
+--- Translate with the AI from AI 设置, falling back to Bilibili's free model.
+function SendToPhone:translateWithAI(text, engine)
+    local prompt = Translate.aiPrompt(text)
+    NetworkMgr:runWhenOnline(function()
+        local busy = InfoMessage:new{ text = "翻译中…" }
+        UIManager:show(busy)
+        UIManager:forceRePaint()
+        local result, reason, note
+        if engine == "ai" then
+            local req, err = AI.buildRequest({
+                base = self.settings:readSetting("ai_base"),
+                model = self.settings:readSetting("ai_model"),
+                key = self.settings:readSetting("ai_key"),
+            }, prompt)
+            if req then
+                result, reason = self:chat(req)
+            else
+                reason = err
+            end
+            if not result then
+                note = "AI 翻译失败，已改用 B站免费翻译：" .. reason:match("^[^\n]*")
+            end
+        end
+        if not result then
+            local first_reason = reason
+            result, reason = self:chat(AI.buildBilibiliRequest(prompt))
+            if not result and first_reason then
+                reason = first_reason .. "\n\nB站免费翻译也失败了：" .. reason
+            end
+        end
+        UIManager:close(busy)
+        if not result then
+            showMessage("翻译失败\n\n" .. reason)
+            return
+        end
+        local TextViewer = require("ui/widget/textviewer")
+        UIManager:show(TextViewer:new{
+            title = "翻译",
+            text = (note and ("（" .. note .. "）\n\n") or "") .. result .. "\n\n――――――\n" .. text,
+        })
+    end)
+end
+
 ---------------------------------------------------------------------------
 -- Asking an AI on the Kindle
 ---------------------------------------------------------------------------
 
--- how: optional {prompt, title, busy, failed} for other uses such as
--- translation; those never search the web.
-function SendToPhone:askAI(text, preset, how)
+--- One chat completion. Returns the answer, or nil and a reason.
+function SendToPhone:chat(req)
+    local code, body, net_err = self:post(req.url, req.body, nil, req.headers, 60, 90)
+    local answer, reason
+    if type(code) ~= "number" then
+        local _, msg = Core.interpretResponse(nil, nil, net_err)
+        reason = msg
+    else
+        local ok, data = pcall(function() return require("json").decode(body or "") end)
+        answer, reason = AI.parseResponse(ok and data or nil, code)
+    end
+    if not answer then
+        logger.warn("SendToPhone: AI failed", req.url, code, net_err, body)
+    end
+    return answer, reason
+end
+
+function SendToPhone:askAI(text, preset)
     local title, author = self:getBookInfo()
     local prompt = text
-    if how then
-        prompt = how.prompt
-    elseif preset and preset.template then
+    if preset and preset.template then
         local template = preset.template
         if not template:find("{text}", 1, true) then
             template = template .. "\n{text}"
@@ -372,7 +423,7 @@ function SendToPhone:askAI(text, preset, how)
         showMessage(err)
         return
     end
-    local search = not how and self:searchEnabled()
+    local search = self:searchEnabled()
     if search and not AI.isDeepSeek(self.settings:readSetting("ai_base")) then
         showMessage("联网搜索只支持 DeepSeek，请在 AI 设置里换回 DeepSeek，或者关掉“问AI 时先联网搜索”。")
         return
@@ -405,22 +456,13 @@ function SendToPhone:askAI(text, preset, how)
                 }, AI.withSources(prompt, results))
             end
         end
-        local busy = InfoMessage:new{ text = how and how.busy or "AI 思考中…" }
+        local busy = InfoMessage:new{ text = "AI 思考中…" }
         UIManager:show(busy)
         UIManager:forceRePaint()
-        local code, body, net_err = self:post(req.url, req.body, nil, req.headers, 60, 90)
+        local answer, reason = self:chat(req)
         UIManager:close(busy)
-        local answer, reason
-        if type(code) ~= "number" then
-            local _, msg = Core.interpretResponse(nil, nil, net_err)
-            reason = msg
-        else
-            local ok, data = pcall(function() return require("json").decode(body or "") end)
-            answer, reason = AI.parseResponse(ok and data or nil, code)
-        end
         if not answer then
-            logger.warn("SendToPhone: AI failed", code, net_err, body)
-            showMessage((how and how.failed or "问 AI 失败") .. "\n\n" .. reason)
+            showMessage("问 AI 失败\n\n" .. reason)
             return
         end
         local parts = { answer }
@@ -434,7 +476,7 @@ function SendToPhone:askAI(text, preset, how)
         table.insert(parts, "――――――\n" .. text)
         local TextViewer = require("ui/widget/textviewer")
         UIManager:show(TextViewer:new{
-            title = how and how.title or preset and preset.name or "问 AI",
+            title = preset and preset.name or "问 AI",
             text = table.concat(parts, "\n\n"),
         })
     end)

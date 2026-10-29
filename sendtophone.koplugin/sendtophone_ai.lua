@@ -11,6 +11,10 @@ local AI = {}
 
 AI.DEFAULT_BASE = "https://api.deepseek.com"
 AI.DEFAULT_MODEL = "deepseek-flash"
+-- Bilibili's free, keyless translation model (announced 2026-10-04 as a
+-- preview; no published limits). Used for 翻译 only, as a free fallback.
+AI.BILIBILI_URL = "https://index-translate.bilibili.com/v1/chat/completions"
+AI.BILIBILI_MODEL = "Index-Translate-35B-A3B"
 AI.SEARCH_URL = "https://api.deepseek.com/v1/tools/search"
 AI.SEARCH_COUNT = 5
 AI.SEARCH_MAX_CHARS = 128 -- query and ori_question limit, in characters
@@ -166,6 +170,19 @@ function AI.sourceList(results)
     return table.concat(lines, "\n")
 end
 
+--- Translation request to Bilibili's free model: no key, no system prompt.
+function AI.buildBilibiliRequest(prompt)
+    local body = "{"
+        .. '"model":' .. jsonString(AI.BILIBILI_MODEL) .. ","
+        .. '"messages":[{"role":"user","content":' .. jsonString(prompt) .. "}],"
+        .. '"temperature":0,'
+        .. '"max_tokens":' .. AI.MAX_TOKENS .. ","
+        .. '"chat_template_kwargs":{"enable_thinking":false},'
+        .. '"stream":false'
+        .. "}"
+    return { url = AI.BILIBILI_URL, body = body, headers = {} }
+end
+
 --- Strip the Markdown that models add anyway, for a plain text viewer.
 function AI.plain(s)
     s = s:gsub("\r", "")
@@ -185,7 +202,11 @@ function AI.parseResponse(data, http_code)
     end
     local choice = type(data.choices) == "table" and data.choices[1]
     local content = choice and choice.message and choice.message.content
-    if type(content) == "string" and content ~= "" then
+    if type(content) == "string" then
+        -- Some models still emit a closed thinking block; drop it.
+        content = content:gsub("<think>.-</think>", "")
+    end
+    if type(content) == "string" and content:match("%S") and not content:find("<think>", 1, true) then
         local text = AI.plain(content)
         if choice.finish_reason == "length" then
             text = text .. "\n\n（回答太长，被截断了）"
