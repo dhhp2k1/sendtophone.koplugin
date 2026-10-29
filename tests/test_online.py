@@ -171,18 +171,21 @@ assert form["sign"] == [md5("2015063000000001" + "hello" + form["salt"][0] + "12
 
 # --- AI: request building and parsing ------------------------------------------
 A = lua.eval('require("sendtophone_ai")')
-assert s(A.endpoint(None)) == "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+assert s(A.endpoint(None)) == "https://api.deepseek.com/chat/completions"
 assert s(A.endpoint(" https://api.deepseek.com/ ")) == "https://api.deepseek.com/chat/completions"
 assert s(A.endpoint("https://x.com/v1/chat/completions")) == "https://x.com/v1/chat/completions"
 req, err = P(A.buildRequest, lua.table_from({}), "q")
 assert req is None and "API Key" in s(err)
 req, err = P(A.buildRequest, lua.table_from({"key": "k1"}), '他说"你好"\n')
 body = json.loads(s(req.body))
-assert body["model"] == "glm-4-flash-250414" and body["stream"] is False and body["max_tokens"] == 800
+assert body["model"] == "deepseek-v4-pro" and body["stream"] is False and body["max_tokens"] == 800
+assert body["thinking"] == {"type": "disabled"}
 assert body["messages"][0]["role"] == "system" and body["messages"][1] == {"role": "user", "content": '他说"你好"\n'}
 assert s(req.headers["Authorization"]) == "Bearer k1"
 req, _ = P(A.buildRequest, lua.table_from({"key": "k", "model": "deepseek-chat", "base": "https://api.deepseek.com"}), "q")
 assert json.loads(s(req.body))["model"] == "deepseek-chat" and s(req.url) == "https://api.deepseek.com/chat/completions"
+req, _ = P(A.buildRequest, lua.table_from({"key": "k", "model": "glm-4-plus", "base": "https://open.bigmodel.cn/api/paas/v4"}), "q")
+assert "thinking" not in json.loads(s(req.body)) and s(req.url) == "https://open.bigmodel.cn/api/paas/v4/chat/completions"
 
 aparse = lambda d, c=200: tuple(s(x) for x in P(A.parseResponse, to_lua(d), c))
 ok = {"choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "## 意思\n这里**孤独**指：\n- 一\n- 二"}}]}
@@ -195,6 +198,8 @@ r, e = aparse({"error": {"code": "1302", "message": "并发数过高"}}, 429)
 assert r is None and "太频繁" in e
 r, e = aparse({"error": {"code": "1211", "message": "模型不存在"}}, 400)
 assert r is None and "模型不存在" in e and "400" in e
+r, e = aparse({"error": {"message": "Insufficient Balance"}}, 402)
+assert r is None and "余额不足" in e
 r, e = aparse(None, 404)
 assert r is None and "接口地址" in e
 
@@ -226,7 +231,7 @@ w = tap_ai("孤独", "查词")
 assert s(w._w) == "TextViewer" and s(w.title) == "查词"
 assert s(w.text).startswith("意思") and s(w.text).endswith("孤独")
 req = G.requests[len(G.requests)]
-assert s(req.url) == "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+assert s(req.url) == "https://api.deepseek.com/chat/completions"
 assert s(req.headers["Authorization"]) == "Bearer sk-abc"
 assert json.loads(s(req.source))["messages"][1]["content"] == "“孤独”在这里是什么意思？一句话回答（出自《百年孤独》，马尔克斯）。"
 w = tap_ai("原样", "只发原文")

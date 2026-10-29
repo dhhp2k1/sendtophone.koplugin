@@ -52,12 +52,12 @@ KOReader 小插件：在书里划词后点"发送到手机"，文字通过 [Bark
 
 划词菜单里的"维基百科"被换成了"问AI"（维基百科在国内连不上）。点它，选一种问法，回答直接显示在 Kindle 上，不用手机。
 
-默认用智谱的 **GLM-4-Flash**，免费，国内直连：
+默认用 **DeepSeek V4 Pro**（关闭了"深度思考"，回答快）。按量付费，一次提问大约 400 字进、300 字出，工作日白天约 1 分钱，晚上和周末半价；充 10 元够问上千次。
 
-1. 在 [bigmodel.cn](https://bigmodel.cn) 用手机号注册，在"API Keys"页面创建一个 Key。
+1. 在 [platform.deepseek.com](https://platform.deepseek.com) 用手机号注册，充值，在"API Keys"页面创建一个 Key。
 2. Kindle 上 工具 → 发送到手机 → AI 设置，把 Key 填进第一栏，保存。
 
-接口兼容 OpenAI 格式，换成 DeepSeek、Kimi 等服务时，在 AI 设置里改接口地址、模型和 Key 就行。
+想更省钱，在 AI 设置的"模型"里填 `deepseek-flash`，价格约为 Pro 的三分之一。接口兼容 OpenAI 格式，换成智谱、Kimi 等服务时，在 AI 设置里改接口地址、模型和 Key 就行（例如智谱的免费模型：地址 `https://open.bigmodel.cn/api/paas/v4`，模型 `glm-4-flash-250414`）。
 
 ## 翻译
 

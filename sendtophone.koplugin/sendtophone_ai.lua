@@ -1,14 +1,15 @@
 --[[--
 Ask an OpenAI-compatible chat API from the Kindle and show the answer there.
-Default is Zhipu's free GLM-4-Flash, which is reachable from mainland China;
-DeepSeek, Kimi and others work by changing the address, model and key.
+Default is DeepSeek V4 Pro (paid, about 1 fen per question, reachable from
+mainland China); Zhipu, Kimi and others work by changing the address, model
+and key.
 Pure request building and response parsing; the plugin does the HTTP.
 --]]
 
 local AI = {}
 
-AI.DEFAULT_BASE = "https://open.bigmodel.cn/api/paas/v4"
-AI.DEFAULT_MODEL = "glm-4-flash-250414"
+AI.DEFAULT_BASE = "https://api.deepseek.com"
+AI.DEFAULT_MODEL = "deepseek-v4-pro"
 AI.SYSTEM_PROMPT = "你是电子书阅读助手。回答要简洁、准确，用纯文本，不要用 Markdown 符号（如 #、*、表格）。"
 AI.MAX_TOKENS = 800
 
@@ -37,9 +38,12 @@ end
 -- @treturn table {url, body, headers} or nil, error
 function AI.buildRequest(conf, prompt)
     if not conf.key or conf.key == "" then
-        return nil, "还没有填 AI 的 API Key。\n\n请到 工具 → 发送到手机 → AI 设置 里填写。智谱的 GLM-4-Flash 是免费的，在 bigmodel.cn 注册后就能创建 Key。"
+        return nil, "还没有填 AI 的 API Key。\n\n请到 工具 → 发送到手机 → AI 设置 里填写。默认用 DeepSeek：在 platform.deepseek.com 注册、充值后创建 Key。"
     end
     local model = (conf.model and conf.model ~= "") and conf.model or AI.DEFAULT_MODEL
+    local url = AI.endpoint(conf.base)
+    -- DeepSeek thinks by default: slower, pricier, and pointless for a lookup.
+    local extra = url:match("^https?://api%.deepseek%.com/") and '"thinking":{"type":"disabled"},' or ""
     local body = "{"
         .. '"model":' .. jsonString(model) .. ","
         .. '"messages":['
@@ -47,10 +51,11 @@ function AI.buildRequest(conf, prompt)
         .. '{"role":"user","content":' .. jsonString(prompt) .. "}"
         .. "],"
         .. '"max_tokens":' .. AI.MAX_TOKENS .. ","
+        .. extra
         .. '"stream":false'
         .. "}"
     return {
-        url = AI.endpoint(conf.base),
+        url = url,
         body = body,
         headers = { Authorization = "Bearer " .. conf.key },
     }
@@ -86,6 +91,8 @@ function AI.parseResponse(data, http_code)
     local msg = type(err) == "table" and (err.message or err.code) or err
     if http_code == 401 or (type(err) == "table" and tostring(err.code) == "1000") then
         return nil, "API Key 不对或已失效，请到 AI 设置里重新填写。" .. (msg and ("\n\n" .. tostring(msg)) or "")
+    elseif http_code == 402 then
+        return nil, "AI 账户余额不足，请到服务商网站充值。" .. (msg and ("\n\n" .. tostring(msg)) or "")
     elseif http_code == 429 then
         return nil, "请求太频繁或额度用完了，稍后再试。" .. (msg and ("\n\n" .. tostring(msg)) or "")
     end

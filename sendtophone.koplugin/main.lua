@@ -613,7 +613,7 @@ function SendToPhone:editAI()
             {
                 text = self.settings:readSetting("ai_key") or "",
                 hint = "API Key",
-                description = "默认用智谱 GLM-4-Flash（免费）：在 bigmodel.cn 注册，到“API Keys”页面创建一个 Key 填在这里。",
+                description = "默认用 DeepSeek V4 Pro（每问约 1 分钱）：在 platform.deepseek.com 注册并充值，到“API Keys”页面创建一个 Key 填在这里。",
             },
             {
                 text = self.settings:readSetting("ai_base") or "",
@@ -622,7 +622,7 @@ function SendToPhone:editAI()
             {
                 text = self.settings:readSetting("ai_model") or "",
                 hint = "模型（留空 = " .. AI.DEFAULT_MODEL .. "）",
-                description = "换成 DeepSeek、Kimi 等兼容 OpenAI 格式的服务时，改接口地址、模型和 Key 就行。",
+                description = "换成智谱、Kimi 等兼容 OpenAI 格式的服务时，改接口地址、模型和 Key 就行。",
             },
         },
         buttons = {{
