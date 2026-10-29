@@ -115,7 +115,7 @@ def press_highlight(text, choice="详细解释"):
 assert s(G.settings_path) == "/koreader/settings/sendtophone.lua"
 assert G.registered is not None
 keys = sorted(s(k) for k in G.highlight._highlight_buttons.keys())
-assert keys == ["12_qr_sendtophone", "12_qr_sendtophone_translate"]
+assert keys == ["07_translate", "12_qr_sendtophone"]
 assert "12_generate_qr_code" < "12_qr_sendtophone" < "12_search"
 
 # --- not configured: a clear hint, no request ------------------------------

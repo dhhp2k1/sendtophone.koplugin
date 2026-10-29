@@ -104,9 +104,11 @@ function SendToPhone:addToHighlightDialog()
             end,
         }
     end)
-    self.ui.highlight:addToHighlightDialog("12_qr_sendtophone_translate", function(this)
+    -- Take over KOReader's own "Translate" slot: it uses Google, which is
+    -- unreachable from mainland China.
+    self.ui.highlight:addToHighlightDialog("07_translate", function(this)
         return {
-            text = "翻译（国内）",
+            text = "翻译",
             callback = function()
                 this:highlightFromHoldPos()
                 local selected = this.selected_text

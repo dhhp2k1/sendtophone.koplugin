@@ -1,4 +1,4 @@
-"""Tests for sendtophone_translate.lua and the 翻译（国内） button, under LuaJIT.
+"""Tests for sendtophone_translate.lua and the 翻译 button that replaces KOReader's Google one, under LuaJIT.
 Run: python3 -m pip install lupa==2.8 && python3 -X utf8 tests/test_translate.py
 """
 from pathlib import Path
@@ -112,7 +112,7 @@ package.loaded["ssl.https"] = { request = function(req)
 end }
 package.loaded["json"] = { decode = function(b) return py_json_decode(b) end }
 package.loaded["ffi/sha2"] = { md5 = function(x) return py_md5(x) end }
-highlight = { _highlight_buttons = {} }
+highlight = { _highlight_buttons = { ["07_translate"] = function() return { text = "Translate" } end } }  -- KOReader's own, to be replaced
 function highlight:addToHighlightDialog(idx, fn) self._highlight_buttons[idx] = fn end
 function highlight:highlightFromHoldPos() end
 function highlight:onClose() end
@@ -121,13 +121,12 @@ plugin = require("main"):new{ ui = ui, document = {} }
 ''')
 G = lua.globals()
 keys = sorted(s(k) for k in G.highlight._highlight_buttons.keys())
-assert keys == ["12_qr_sendtophone", "12_qr_sendtophone_translate"], keys
-assert "12_generate_qr_code" < "12_qr_sendtophone_translate" < "12_search"
+assert keys == ["07_translate", "12_qr_sendtophone"], keys
 
 def tap_translate(text):
     G.highlight.selected_text = lua.table_from({"text": text})
-    b = G.highlight._highlight_buttons["12_qr_sendtophone_translate"](G.highlight)
-    assert s(b.text) == "翻译（国内）"
+    b = G.highlight._highlight_buttons["07_translate"](G.highlight)
+    assert s(b.text) == "翻译"
     b.callback()
     return G.shown[len(G.shown)]
 
