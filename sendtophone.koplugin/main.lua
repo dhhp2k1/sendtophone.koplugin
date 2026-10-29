@@ -16,6 +16,7 @@ local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local logger = require("logger")
 local util = require("util")
 local Core = require("sendtophone_core")
+local Translate = require("sendtophone_translate")
 
 local SendToPhone = WidgetContainer:extend{
     name = "sendtophone",
@@ -103,6 +104,21 @@ function SendToPhone:addToHighlightDialog()
             end,
         }
     end)
+    self.ui.highlight:addToHighlightDialog("12_qr_sendtophone_translate", function(this)
+        return {
+            text = "翻译（国内）",
+            callback = function()
+                this:highlightFromHoldPos()
+                local selected = this.selected_text
+                local text = selected and selected.text and util.cleanupSelectedText(selected.text)
+                this:onClose()
+                if not text or text == "" then
+                    return
+                end
+                self:translate(text)
+            end,
+        }
+    end)
 end
 
 function SendToPhone:getBookInfo()
@@ -125,8 +141,8 @@ local function showMessage(text, timeout)
     UIManager:show(InfoMessage:new{ text = text, timeout = timeout })
 end
 
---- POST json to url. Returns http code (or nil), response body, error.
-function SendToPhone:post(url, json)
+--- POST body to url. Returns http code (or nil), response body, error.
+function SendToPhone:post(url, json, content_type)
     local ltn12 = require("ltn12")
     local socket = require("socket")
     local socketutil = require("socketutil")
@@ -143,7 +159,7 @@ function SendToPhone:post(url, json)
             url = url,
             method = "POST",
             headers = {
-                ["Content-Type"] = "application/json; charset=utf-8",
+                ["Content-Type"] = content_type or "application/json; charset=utf-8",
                 ["Content-Length"] = tostring(#json),
                 ["User-Agent"] = socketutil.USER_AGENT,
             },
@@ -231,6 +247,53 @@ function SendToPhone:chooseAndSend(text)
 end
 
 ---------------------------------------------------------------------------
+-- Translation shown on the Kindle
+---------------------------------------------------------------------------
+
+function SendToPhone:getEngine()
+    return self.settings:readSetting("translate_engine") or "edge"
+end
+
+function SendToPhone:translate(text)
+    local engine = self:getEngine()
+    local req, err = Translate.buildRequest(engine, text, {
+        appid = self.settings:readSetting("baidu_appid"),
+        secret = self.settings:readSetting("baidu_secret"),
+        salt = math.random(10000, 99999),
+        md5 = function(s) return require("ffi/sha2").md5(s) end,
+    })
+    if not req then
+        showMessage(err)
+        return
+    end
+    NetworkMgr:runWhenOnline(function()
+        local busy = InfoMessage:new{ text = "翻译中…" }
+        UIManager:show(busy)
+        UIManager:forceRePaint()
+        local code, body, net_err = self:post(req.url, req.body, req.content_type)
+        UIManager:close(busy)
+        local result, reason
+        if type(code) ~= "number" then
+            local _, msg = Core.interpretResponse(nil, nil, net_err)
+            reason = msg
+        else
+            local ok, data = pcall(function() return require("json").decode(body or "") end)
+            result, reason = Translate.parseResponse(engine, ok and data or nil, code)
+        end
+        if not result then
+            logger.warn("SendToPhone: translate failed", engine, code, net_err, body)
+            showMessage("翻译失败\n\n" .. reason)
+            return
+        end
+        local TextViewer = require("ui/widget/textviewer")
+        UIManager:show(TextViewer:new{
+            title = "翻译",
+            text = result .. "\n\n――――――\n" .. text,
+        })
+    end)
+end
+
+---------------------------------------------------------------------------
 -- Main menu (工具 → 发送到手机)
 ---------------------------------------------------------------------------
 
@@ -294,6 +357,13 @@ function SendToPhone:addToMainMenu(menu_items)
                 enabled_func = function() return self:shortcutEnabled() end,
                 callback = function(touchmenu_instance)
                     self:editShortcutName(touchmenu_instance)
+                end,
+                separator = true,
+            },
+            {
+                text = "翻译设置",
+                sub_item_table_func = function()
+                    return self:translateMenuItems()
                 end,
             },
         },
@@ -366,6 +436,78 @@ function SendToPhone:editShortcutName(touchmenu_instance)
                     if touchmenu_instance then
                         touchmenu_instance:updateItems()
                     end
+                end,
+            },
+        }},
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
+end
+
+function SendToPhone:translateMenuItems()
+    local items = {}
+    for _, e in ipairs(Translate.ENGINES) do
+        table.insert(items, {
+            text = e.name,
+            radio = true,
+            checked_func = function() return self:getEngine() == e.id end,
+            callback = function()
+                self.settings:saveSetting("translate_engine", e.id)
+                self.settings:flush()
+            end,
+        })
+    end
+    items[#items].separator = true
+    table.insert(items, {
+        text_func = function()
+            local appid = self.settings:readSetting("baidu_appid")
+            return "百度翻译 APP ID 和密钥：" .. (appid and Core.maskKey(appid) or "未设置")
+        end,
+        keep_menu_open = true,
+        callback = function(touchmenu_instance)
+            self:editBaiduKeys(touchmenu_instance)
+        end,
+    })
+    return items
+end
+
+function SendToPhone:editBaiduKeys(touchmenu_instance)
+    local dialog
+    dialog = MultiInputDialog:new{
+        title = "百度翻译",
+        fields = {
+            { text = self.settings:readSetting("baidu_appid") or "", hint = "APP ID" },
+            {
+                text = self.settings:readSetting("baidu_secret") or "",
+                hint = "密钥",
+                description = "在 fanyi-api.baidu.com 注册，开通“通用文本翻译”（标准版免费），在“管理控制台 → 开发者信息”里能看到 APP ID 和密钥。",
+            },
+        },
+        buttons = {{
+            {
+                text = "取消",
+                id = "close",
+                callback = function() UIManager:close(dialog) end,
+            },
+            {
+                text = "保存",
+                callback = function()
+                    local fields = dialog:getFields()
+                    local appid = (fields[1] or ""):gsub("%s", "")
+                    local secret = (fields[2] or ""):gsub("%s", "")
+                    if appid == "" or secret == "" then
+                        showMessage("APP ID 和密钥都要填")
+                        return
+                    end
+                    self.settings:saveSetting("baidu_appid", appid)
+                    self.settings:saveSetting("baidu_secret", secret)
+                    self.settings:saveSetting("translate_engine", "baidu")
+                    self.settings:flush()
+                    UIManager:close(dialog)
+                    if touchmenu_instance then
+                        touchmenu_instance:updateItems()
+                    end
+                    showMessage("已保存，翻译会改用百度", 2)
                 end,
             },
         }},

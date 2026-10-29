@@ -48,6 +48,15 @@ KOReader 小插件：在书里划词后点"发送到手机"，文字通过 [Bark
 
 代价：问题在推送里要放两份（一份显示，一份放在链接里），能发的长度大约是原来的四分之一，中文约 280 字。超出会截断并提示。
 
+## 翻译（国内）
+
+划词菜单里多了一个"翻译（国内）"按钮，结果直接显示在 Kindle 上，不用发到手机。中文翻成英文，其他语言翻成中文。KOReader 自带的"翻译"连的是谷歌，在国内用不了，这个是替代入口。
+
+两个翻译引擎，在 工具 → 发送到手机 → 翻译设置 里切换：
+
+- **微软翻译**（默认）：免费，不用任何设置。这是 Edge 浏览器内置翻译用的接口，不是官方公开的 API，以后可能会变。
+- **百度翻译**：官方接口，稳定。需要在 [fanyi-api.baidu.com](https://fanyi-api.baidu.com) 注册，开通"通用文本翻译"（标准版免费），把 APP ID 和密钥填进翻译设置。填好后会自动切到百度。
+
 ## 细节
 
 - 设置保存在 `koreader/settings/sendtophone.lua`。
@@ -61,6 +70,7 @@ KOReader 小插件：在书里划词后点"发送到手机"，文字通过 [Bark
 python3 -m pip install lupa==2.8
 python3 -X utf8 tests/test_core.py
 python3 -X utf8 tests/test_plugin.py
+python3 -X utf8 tests/test_translate.py
 ```
 
 测试在 LuaJIT 下运行插件代码（和 Kindle 上的 KOReader 一样），KOReader 模块用假的替代。
