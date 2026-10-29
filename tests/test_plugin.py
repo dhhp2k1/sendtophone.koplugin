@@ -167,12 +167,10 @@ assert G.package.loaded["socketutil"].cur is None, "timeouts are reset"
 
 # --- choosing a way to ask ---------------------------------------------------
 names = press_highlight("raw text", "只发原文")
-assert names == ["简短解释", "查词", "翻译", "详细解释", "只发原文", "取消"], names
+assert names == ["简短解释", "查词", "详细解释", "只发原文", "取消"], names
 assert json.loads(s(G.requests[len(G.requests)].source))["body"] == "raw text"
 press_highlight("serendipity", "查词")
 assert json.loads(s(G.requests[len(G.requests)].source))["body"] == "“serendipity”在这里是什么意思？一句话回答（出自《三体》，刘慈欣）。"
-press_highlight("hello", "翻译")
-assert json.loads(s(G.requests[len(G.requests)].source))["body"].endswith("只给译文：\nhello")
 n = len(G.requests)
 press_highlight("x", "取消")
 assert len(G.requests) == n, "cancel sends nothing"
@@ -189,7 +187,7 @@ toggle.callback()
 # --- editing a way to ask ----------------------------------------------------
 edit = items.sub_item_table[4]
 sub = edit.sub_item_table_func()
-assert [s(sub[i].text_func()) for i in range(1, 6)] == ["1. 简短解释", "2. 查词", "3. 翻译", "4. 详细解释", "5. 只发原文"]
+assert [s(sub[i].text_func()) for i in range(1, 5)] == ["1. 简短解释", "2. 查词", "3. 详细解释", "4. 只发原文"]
 sub[3].callback(tm)
 dlg = G.shown[len(G.shown)]
 assert s(dlg._w) == "MultiInputDialog"

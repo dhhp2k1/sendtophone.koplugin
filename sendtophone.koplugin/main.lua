@@ -119,7 +119,7 @@ function SendToPhone:addToHighlightDialog()
                 end
                 self:choosePreset(text, "问 AI", function(preset)
                     self:askAI(text, preset)
-                end)
+                end, true)
             end,
         }
     end)
@@ -250,8 +250,20 @@ function SendToPhone:chooseAndSend(text)
 end
 
 --- Let the user pick a way to ask, or use the first one directly.
-function SendToPhone:choosePreset(text, title, on_choose)
+-- skip_raw leaves out "只发原文" and other presets without a template.
+function SendToPhone:choosePreset(text, title, on_choose, skip_raw)
     local presets = self:getPresets()
+    if skip_raw then
+        local with_template = {}
+        for _, p in ipairs(presets) do
+            if p.template and p.template ~= "" then
+                table.insert(with_template, p)
+            end
+        end
+        if #with_template > 0 then
+            presets = with_template
+        end
+    end
     if not self:askEachTime() then
         on_choose(presets[1])
         return

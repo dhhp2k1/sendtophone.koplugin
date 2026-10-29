@@ -214,6 +214,7 @@ def tap_ai(text, choice):
     if len(G.shown) > n and s(dlg._w) == "ButtonDialog":
         assert s(dlg.title) == "问 AI"
         names = [s(dlg.buttons[i][1].text) for i in range(1, len(dlg.buttons) + 1)]
+        assert names == ["简短解释", "查词", "详细解释", "取消"], names  # no raw-text option here
         dlg.buttons[names.index(choice) + 1][1].callback()
     return G.shown[len(G.shown)]
 
@@ -234,8 +235,6 @@ req = G.requests[len(G.requests)]
 assert s(req.url) == "https://api.deepseek.com/chat/completions"
 assert s(req.headers["Authorization"]) == "Bearer sk-abc"
 assert json.loads(s(req.source))["messages"][1]["content"] == "“孤独”在这里是什么意思？一句话回答（出自《百年孤独》，马尔克斯）。"
-w = tap_ai("原样", "只发原文")
-assert json.loads(s(G.requests[len(G.requests)].source))["messages"][1]["content"] == "原样"
 G.next_response = lambda req: (None, "wantread")
 w = tap_ai("x", "查词")
 assert "问 AI 失败" in s(w.text) and "超时" in s(w.text)

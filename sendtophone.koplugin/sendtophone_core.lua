@@ -21,7 +21,6 @@ Core.DEFAULT_TEMPLATE = "请结合上下文解释下面这段文字{source}：\n
 Core.DEFAULT_PRESETS = {
     { name = "简短解释", template = "用两三句话、不超过100字，解释下面这段文字在书中的意思{source}：\n{text}" },
     { name = "查词", template = "“{text}”在这里是什么意思？一句话回答{source}。" },
-    { name = "翻译", template = "把下面这段文字翻译成中文（原文是中文就翻译成英文），只给译文：\n{text}" },
     { name = "详细解释", template = Core.DEFAULT_TEMPLATE },
     { name = "只发原文" },
 }
